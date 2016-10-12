@@ -173,10 +173,6 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
     // This string makes up part of the class names, differentiating them (not sure why) from the membership fields.
     $this->assign('formClass', 'membership');
     parent::preProcess();
-    // get price set id.
-    $this->_priceSetId = CRM_Utils_Array::value('priceSetId', $_GET);
-    $this->set('priceSetId', $this->_priceSetId);
-    $this->assign('priceSetId', $this->_priceSetId);
 
     if ($this->_action & CRM_Core_Action::DELETE) {
       $contributionID = CRM_Member_BAO_Membership::getMembershipContributionId($this->_id);
@@ -267,7 +263,7 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
    */
   public function setDefaultValues() {
 
-    if ($this->_priceSetId) {
+    if ($this->_priceSetId && $this->_priceSetOnly) {
       return CRM_Price_BAO_PriceSet::setDefaultPriceSet($this, $defaults);
     }
 
@@ -279,21 +275,6 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
       $defaults['receive_date'] = $now;
       $defaults['receive_date_time'] = $currentTime;
     }
-
-    if (is_numeric($this->_memType)) {
-      $defaults['membership_type_id'] = array();
-      $defaults['membership_type_id'][0] = CRM_Core_DAO::getFieldValue('CRM_Member_DAO_MembershipType',
-        $this->_memType,
-        'member_of_contact_id',
-        'id'
-      );
-      $defaults['membership_type_id'][1] = $this->_memType;
-    }
-    else {
-      $defaults['membership_type_id'] = $this->_memType;
-    }
-
-    $defaults['num_terms'] = 1;
 
     if (!empty($defaults['id'])) {
       if ($this->_onlinePendingContributionId) {
@@ -312,10 +293,6 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
         }
       }
     }
-
-    //set Soft Credit Type to Gift by default
-    $scTypes = CRM_Core_OptionGroup::values("soft_credit_type");
-    $defaults['soft_credit_type_id'] = CRM_Utils_Array::value(ts('Gift'), array_flip($scTypes));
 
     if (!empty($defaults['record_contribution']) && !$this->_mode) {
       $contributionParams = array('id' => $defaults['record_contribution']);
@@ -343,9 +320,6 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
       $defaults['payment_instrument_id'] = key(CRM_Core_OptionGroup::values('payment_instrument', FALSE, FALSE, FALSE, 'AND is_default = 1'));
     }
 
-    // User must explicitly choose to send a receipt in both add and update mode.
-    $defaults['send_receipt'] = 0;
-
     if ($this->_action & CRM_Core_Action::UPDATE) {
       // in this mode by default uncheck this checkbox
       unset($defaults['record_contribution']);
@@ -363,20 +337,10 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
     }
     $this->assign('alreadyAutoRenew', $alreadyAutoRenew);
 
-    $this->assign('member_is_test', CRM_Utils_Array::value('member_is_test', $defaults));
-
     $this->assign('membership_status_id', CRM_Utils_Array::value('status_id', $defaults));
 
     if (!empty($defaults['is_pay_later'])) {
       $this->assign('is_pay_later', TRUE);
-    }
-    if ($this->_mode) {
-      $defaults = $this->getBillingDefaults($defaults);
-      // hack to simplify credit card entry for testing
-      // $defaults['credit_card_type']     = 'Visa';
-      // $defaults['credit_card_number']   = '4807731747657838';
-      // $defaults['cvv2']                 = '000';
-      // $defaults['credit_card_exp_date'] = array( 'Y' => '2012', 'M' => '05' );
     }
 
     $dates = array('join_date', 'start_date', 'end_date');
@@ -411,18 +375,8 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
     if (isset($invoicing)) {
       $this->assign('taxTerm', CRM_Utils_Array::value('tax_term', $invoiceSettings));
     }
-    // build price set form.
-    $buildPriceSet = FALSE;
-    if ($this->_priceSetId || !empty($_POST['price_set_id'])) {
-      if (!empty($_POST['price_set_id'])) {
-        $buildPriceSet = TRUE;
-      }
-      $getOnlyPriceSetElements = TRUE;
-      if (!$this->_priceSetId) {
-        $this->_priceSetId = $_POST['price_set_id'];
-        $getOnlyPriceSetElements = FALSE;
-      }
 
+    if ($this->_priceSetId) {
       $this->set('priceSetId', $this->_priceSetId);
       CRM_Price_BAO_PriceSet::buildPriceSet($this);
 
@@ -442,31 +396,17 @@ class CRM_Member_Form_Membership extends CRM_Member_Form {
       $this->assign('contributionType', CRM_Utils_Array::value('financial_type_id', $this->_priceSet));
 
       // get only price set form elements.
-      if ($getOnlyPriceSetElements) {
+      if ($this->_priceSetOnly) {
         return;
       }
     }
 
-    // use to build form during form rule.
-    $this->assign('buildPriceSet', $buildPriceSet);
+    // use to build form during form rule.  If request was to "_priceSetOnly"
+    // then we're obviously not in a rule, so we don't need to build price set,
+    // we we pass FALSE to 'buildPriceSet' argument
+    $this->assign('buildPriceSet', !$this->_priceSetOnly);
 
-    if ($this->_action & CRM_Core_Action::ADD) {
-      $buildPriceSet = FALSE;
-      $priceSets = CRM_Price_BAO_PriceSet::getAssoc(FALSE, 'CiviMember');
-      if (!empty($priceSets)) {
-        $buildPriceSet = TRUE;
-      }
-
-      if ($buildPriceSet) {
-        $this->add('select', 'price_set_id', ts('Choose price set'),
-          array(
-            '' => ts('Choose price set'),
-          ) + $priceSets,
-          NULL, array('onchange' => "buildAmount( this.value );")
-        );
-      }
-      $this->assign('hasPriceSets', $buildPriceSet);
-    }
+    $priceSets = $this->assignPriceSet();
 
     //need to assign custom data type and subtype to the template
     $this->assign('customDataType', 'Membership');
