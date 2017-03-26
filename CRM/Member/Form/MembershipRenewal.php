@@ -648,15 +648,6 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       $renewMembership = $this->submitRenewMembershipSingle($this->_id, $this->_params['membership_type_id'][1], $contributionRecurID);
       $membershipIdForUDF = $this->_id;
     }
-    $isPending = ($this->_params['contribution_status_id'] == 2) ? TRUE : FALSE;
-
-    list($renewMembership) = CRM_Member_BAO_Membership::processMembership(
-      $this->_contactID, $this->_params['membership_type_id'][1], $isTestMembership,
-      $renewalDate, NULL, $customFieldsFormatted, $numRenewTerms, $this->_membershipId,
-      $isPending,
-      $contributionRecurID, $membershipSource, $this->_params['is_pay_later'], CRM_Utils_Array::value('campaign_id',
-      $this->_params)
-    );
 
     $this->endDate = CRM_Utils_Date::processDate($renewMembership->end_date);
 
@@ -832,16 +823,16 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
   }
 
 
-  private function submitRenewMembershipSingle($membershiId, $membershpiTypeId, $contributionRecurID) {
+  private function submitRenewMembershipSingle($membershipId, $membershipTypeId, $contributionRecurID) {
     // @todo we should always create as pending and update when completed.
     $isPending = ($this->_params['contribution_status_id'] == 2) ? TRUE : FALSE;
 
     // most vars are the same.  Some differ depending on whether a new membership, or renewing an existing one.
 
-    // set test flag... copy from pre-existing membership, or if new membership, copy from membersihp from which it was copied.
-    $isTestMembership = CRM_Core_DAO::getFieldValue('CRM_Member_DAO_Membership', !$membershiId ? $this->_id : $membershiId, 'is_test');
+    // set test flag... copy from pre-existing membership, or if new membership, copy from membership from which it was copied.
+    $isTestMembership = CRM_Core_DAO::getFieldValue('CRM_Member_DAO_Membership', !$membershipId ? $this->_id : $membershipId, 'is_test');
     $renewalDate = !empty($this->_params['renewal_date']) ? CRM_Utils_Date::processDate($this->_params['renewal_date']) : NULL;
-    $customFieldsFormatted = CRM_Core_BAO_CustomField::postProcess($this->_params, $membershiId, 'Membership');
+    $customFieldsFormatted = CRM_Core_BAO_CustomField::postProcess($this->_params, $membershipId, 'Membership');
 
     // These variable sets prior to renewMembership may not be required for this form. They were in
     // a function this form shared with other forms.
@@ -856,15 +847,15 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       $numRenewTerms = $this->_params['num_terms'];
     }
 
-    list($result) = CRM_Member_BAO_Membership::renewMembership(
+    list($result) = CRM_Member_BAO_Membership::processMembership(
             $this->_contactID,
-            $membershpiTypeId,
+            $membershipTypeId,
             $isTestMembership,
             $renewalDate,
             NULL,
             $customFieldsFormatted,
             $numRenewTerms,
-            $membershiId,
+            $membershipId,
             $isPending,
             $contributionRecurID,
             $membershipSource,
