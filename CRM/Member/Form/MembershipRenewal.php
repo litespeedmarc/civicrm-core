@@ -143,7 +143,38 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       )
     );
 
-    if ($this->_mode) {
+    // there is a bunch of processing on price set id.  Make sure to retrieve it from
+    // submitteValues first when doing "submit".
+    if (!empty($this->_submitValues['price_set_id'])) {
+      $this->_priceSetId = $this->_submitValues['price_set_id'];
+    }
+
+    $skipMinimumAmountCheck = false;
+    if (empty($this->_priceSetId)) {
+      $pair = CRM_Price_BAO_PriceSet::getLastPriceSetUsed($this->_id);
+      if ($pair != NULL) {
+        $this->_priceSetId = $pair['price_set_id'];
+        // this logic here (and the more complicated SQL from getLastPriceSet used to
+        // set this param) arguably not required.  For simple uses of price sets, (e.g.,
+        // one price set / org & few contribs, works well.  For complicated use cases
+        // (e.g., multiple price sets, multiple orgs per price set) also works well,
+        // if not better, making it easier for an admin to pick a price set that has the
+        // "most" coverage.
+        $this->assign('show_price_set', $pair['price_set_is_through_contribution']);
+        $skipMinimumAmountCheck = true;
+      }
+    } else {
+      // a price set is specified, we're reloading this page to load price set, skip the edit check.
+      // wouldn't make sense to prevent, even if min amount was == 0, there are many price options
+      // that *could* result in a chargeable amount.
+      $skipMinimumAmountCheck = true;
+    }
+
+    if (!empty($this->_submitValues['price_set_id'])) {
+      $this->assign('show_price_set', TRUE);
+    }
+
+    if ($this->_mode && $skipMinimumAmountCheck == false) {
       $membershipFee = CRM_Core_DAO::getFieldValue('CRM_Member_DAO_MembershipType', $this->_memType, 'minimum_fee');
       if (!$membershipFee) {
         $statusMsg = ts('Membership Renewal using a credit card requires a Membership fee. Since there is no fee associated with the selected membership type, you can use the normal renewal mode.');
@@ -162,28 +193,7 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
     }
 
     CRM_Utils_System::setTitle(ts('Renew Membership'));
-    // there is a bunch of processing on price set id.  Make sure to retrieve it from
-    // submitteValues first when doing "submit".
-    if (!empty($this->_submitValues['price_set_id'])) {
-      $this->_priceSetId = $this->_submitValues['price_set_id'];
-    }
 
-    if (empty($this->_priceSetId)) {
-      $pair = CRM_Price_BAO_PriceSet::getLastPriceSetUsed($this->_id);
-      if ($pair != NULL) {
-        $this->_priceSetId = $pair['price_set_id'];
-        // this logic here (and the more complicated SQL from getLastPriceSet used to
-        // set this param) arguably not required.  For simple uses of price sets, (e.g.,
-        // one price set / org & few contribs, works well.  For complicated use cases
-        // (e.g., multiple price sets, multiple orgs per price set) also works well,
-        // if not better, making it easier for an admin to pick a price set that has the
-        // "most" coverage.
-        $this->assign('show_price_set', $pair['price_set_is_through_contribution']);
-      }
-    }
-    if (!empty($this->_submitValues['price_set_id'])) {
-      $this->assign('show_price_set', TRUE);
-    }
 
     parent::preProcess();
   }
@@ -198,6 +208,9 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       return FALSE;
     }
     $contactMembershipOrgs = CRM_Member_BAO_Membership::getActiveContactMemberships($this->_contactID);
+    if (empty($contactMembershipOrgs)) {
+      return TRUE;
+    }
     foreach ($this->_priceSet['fields'] as $fieldOptions) {
       foreach ($fieldOptions['options'] as $fieldValues) {
         $membershipType = $fieldValues['membership_type_id'];
@@ -444,17 +457,30 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       // add price set fields for validation.
       return;
     }
-    $this->assignPriceSet();
 
-    // pass the price set id of default (or selected) price set back to smarty
-    $this->assign("priceSetId", $this->_priceSetId);
-    // set default on price set to value determined in buildQuickForm
-    $this->set("priceSetId", $this->_priceSetId);
-    // add all elements that are part of price set (these will be hidden to start)
-    // but will correspond to "last price set used".
-    CRM_Price_BAO_PriceSet::buildPriceSet($this);
+    // show_price_set will be set to one of false, true, or not set at all.
+    // false == membership type being renewed could have been picked from a price set, but membership never created
+    //          using a price set, so don't show.  In this case we don't show price set options, but allow user
+    //          to 'renew using a price set'.
+    // true  == membership type being renewed was created from a price set.  In this case we show price set options by default
+    //          and allow user to "renew without priceset".
+    // NULL  == membership type being renewed was created from a price set.
+    $showPriceSet = $this->get_template_vars("show_price_set");
+    if ($showPriceSet !== null) {
+      // assign price set, looks at whether there are price sets defined or not.  We want more
+      // we want to make sure membership type being renewed actually has a price set.
+      $this->assignPriceSet();
 
-    $this->assign('price_set_has_new_orgs', $this->getPriceSetHasNewOrgs());
+      // pass the price set id of default (or selected) price set back to smarty
+      $this->assign("priceSetId", $this->_priceSetId);
+      // set default on price set to value determined in buildQuickForm
+      $this->set("priceSetId", $this->_priceSetId);
+      // add all elements that are part of price set (these will be hidden to start)
+      // but will correspond to "last price set used".
+      CRM_Price_BAO_PriceSet::buildPriceSet($this);
+
+      $this->assign('price_set_has_new_orgs', $this->getPriceSetHasNewOrgs());
+    }
 
   }
 

@@ -1753,11 +1753,11 @@ SELECT p.contribution_id, c.receive_Date, pf.price_set_id
     // the most of this contact's members of organizations (firstly), and the most
     // of this contact's membership types (secondly)
     $sql = "
-SELECT id, name,
+SELECT ps.id, ps.name,
 			(
 				SELECT COUNT(*)
 				  FROM civicrm_membership m
-				 WHERE m.contact_id = (select contact_id from civicrm_membership where id = %1)
+				 WHERE m.contact_id = mem_renewed.contact_id
 				   AND EXISTS(SELECT 1 FROM civicrm_price_field_value pfv, civicrm_price_field pf
 				 				  WHERE pfv.membership_type_id = m.membership_type_id
 				 				    AND pfv.is_active
@@ -1768,11 +1768,13 @@ SELECT id, name,
 		     ) AS match_ps_cnt,
 		     (
 				SELECT COUNT(*)
-				  FROM civicrm_membership m
+				  FROM -- count memberships
+				      civicrm_membership m
 				  	  INNER JOIN civicrm_membership_type mt ON mt.id = m.membership_type_id
-				 WHERE m.contact_id = (select contact_id from civicrm_membership where id = %1)
-				   AND EXISTS(SELECT 1 FROM civicrm_price_field_value pfv, civicrm_price_field pf
-				 				  WHERE pfv.membership_type_id IN (SELECT membership_type_id
+				 WHERE m.contact_id = mem_renewed.contact_id
+				   AND -- for which there exists a price set field value for the same org
+				       EXISTS(SELECT 1 FROM civicrm_price_field_value pfv, civicrm_price_field pf
+				 				  WHERE pfv.membership_type_id IN (SELECT mt2.id
 				 				  						       FROM civicrm_membership_type mt2
 				 				  						      WHERE mt2.member_of_contact_id = mt.member_of_contact_id)
 				 				    AND pfv.is_active
@@ -1781,10 +1783,20 @@ SELECT id, name,
 				 				    AND pf.price_set_id = ps.id
 				 		   )
 		     ) AS match_org_cnt
-  FROM civicrm_price_set ps
- WHERE is_active = 1
-   AND is_quick_config = 0
+  FROM civicrm_price_set ps, civicrm_membership mem_renewed, civicrm_membership_type mt_renewed
+ WHERE mem_renewed.id = %1
+   AND mt_renewed.id = mem_renewed.membership_type_id
+   AND ps.is_active = 1
+   AND ps.is_quick_config = 0
+       -- also make sure price set returned covers org of memebership being renewed
+   AND EXISTS(SELECT 1 
+                FROM civicrm_price_field pf, civicrm_price_field_value pfv 
+               WHERE pf.price_set_id = ps.id
+                 AND pfv.price_field_id = pf.id
+                 AND pfv.membership_type_id IN (SELECT mt.id FROM civicrm_membership_type mt WHERE mt.member_of_contact_id = mt_renewed.member_of_contact_id)
+             )
  ORDER BY match_org_cnt DESC, match_ps_cnt DESC, ps.id
+ LIMIT 1
  ";
 
     $params = array(1 => array($membership_id, 'Integer'));
