@@ -804,8 +804,10 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
   }
 
   private function submitRenewMembershipsPriceSet($contributionRecurID) {
+    // all organization types (e.g. Health Institute) by Type (e.g., Full Fee, Student)
     $allOrgsByType = CRM_Member_BAO_MembershipType::getMembershipTypeOrganization();
 
+    // The membership types selected in the renew by priceset form.
     $membershipTypesSelected = CRM_Member_Form_Membership::getSelectedMemberships(
       $this->_priceSet,
       $this->_params
@@ -813,6 +815,8 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
 
     $renewedMemberships = array();
 
+    // All membership types that this contact has, by org.  Assumes one / org.  If multiple (for whatever bad data reason),
+    // heuristics are used.
     $allMemTypesByOrg = CRM_Member_BAO_Membership::getContactMemberhipsByMembeshipOrg($this->_contactID);
 
     $priceFieldValueIds = array_keys($this->_params['lineItems'][$this->_priceSetId]);
@@ -821,7 +825,7 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
     $membershipTypeValues = array();
     foreach ($membershipTypesSelected as $memType) {
       $org = $allOrgsByType[$memType];
-      $membershipIdToUpdate = $allMemTypesByOrg[$org]['membership_id'] ?: NULL;
+      $membershipIdToUpdate = empty($allMemTypesByOrg[$org]) ? NULL : $allMemTypesByOrg[$org]['membership_id'] ?: NULL;
       $membership = $this->submitRenewMembershipSingle($membershipIdToUpdate, $memType, $contributionRecurID);
       // set the id on the line item.  This will result in the proper line_item row being created later on in
       // CRM_Price_BAO_LineItem::processPriceSet (This is certainly a Demeter Law violation!)
@@ -873,6 +877,11 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
       $numRenewTerms = $this->_params['num_terms'];
     }
 
+    // CRM-15861.  Set join_date to renewal date.  If selected membership doesn't yet exist, then
+    // it will be created with the "member since" date specified (as per message shown on screen
+    // for this field find "renewal_date" in MembershipRenewal.tpl for more.
+    $formDates = array('join_date' => $renewalDate);
+
     list($result) = CRM_Member_BAO_Membership::processMembership(
             $this->_contactID,
             $membershipTypeId,
@@ -886,7 +895,8 @@ class CRM_Member_Form_MembershipRenewal extends CRM_Member_Form {
             $contributionRecurID,
             $membershipSource,
             $this->_params['is_pay_later'],
-            CRM_Utils_Array::value('campaign_id', $this->_params)
+            CRM_Utils_Array::value('campaign_id', $this->_params),
+            $formDates
     );
     return $result;
 

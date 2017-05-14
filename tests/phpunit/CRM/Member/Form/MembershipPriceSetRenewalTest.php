@@ -122,34 +122,73 @@ class CRM_Member_Form_MembershipPriceSetRenewalTest extends CiviUnitTestCase {
 
   /**
    * Test the submit function of the membership form.
+   *
+   *
+   * In this test, we start with two memberships (CSC & ACCN).
+   *
+   * We renew, using a price set, picking four memberships:
+   *  767 (CSC Full Fee)
+   *  781 (CSChE Additional Member)
+   *  782 (CSCT Additiona Member)
+   *  783 (ACCN Print & On-Line).
+   *
+   * Expected result is that we now that the 2 previous memberships have had their end date extended,
+   * start & join date remain unchanged.  The 2 new memberships get their join dates set to join_date
+   * specified & start date based on membership rules.
    */
-  public function testSubmit() {
-    $form = $this->getForm();
+  public function testSubmit_RenewPickExistingAndAddNew() {
+    $this->_contactID = $this->individualCreate();
+
+    $this->_mem_date = "04/23/2017";
+    $memberships[0] = $this->cicContactMembershipCreate(199); // CSC Full Fee (member of contact #5)
+    $memberships[1] = $this->cicContactMembershipCreate(165); // ACCN Print (member of contact #8)
+
+    $form = $this->getForm($memberships[0]);
     $this->createLoggedInUser();
     $params = array(
+      'action' => 'renew',
       'cid' => $this->_contactID,
-      'join_date' => date('m/d/Y', time()),
-      'start_date' => '',
-      'end_date' => '',
+      'id' => $memberships[0],
+      'context' => "membership",
+      'selectedChild' => "member",
+      'snippet' => "json",
+
+      'price_set_id' => "32",
+      'price_364' => "767",
+      'price_365' => array(
+        '781' => "1",
+        '782' => "1"
+      ),
+      'price_366' => "783",
+      'renewal_date' => $this->_mem_date,
+      'renewal_date_display_58fd51610b17b' => $this->_mem_date,
+      'record_contribution' => "1",
+      'soft_credit_type_id' => "11",
+      'total_amount' => "206.85",
+      'receive_date' => $this->_mem_date,
+      'receive_date_display_58fd51610dcac' => $this->_mem_date,
+      'receive_date_time' => "09:14PM",
+      'financial_type_id' => "2",
+      // 'payment_instrument_id' => "4",
+      'contribution_status_id' => "1",
       // This format reflects the 23 being the organisation & the 25 being the type.
-      'membership_type_id' => array(23, $this->membershipTypeAnnualFixedID),
+      // when renewing price set, there won't be a membershiptype.
+      'membership_type_id' => array(23, null),
       'auto_renew' => '0',
-      'max_related' => '',
+      'is_recur' => 0,
+      'max_related' => 0,
       'num_terms' => '1',
       'source' => '',
-      'total_amount' => '50.00',
       //Member dues, see data.xml
-      'financial_type_id' => '2',
-      'soft_credit_type_id' => '',
       'soft_credit_contact_id' => '',
       'from_email_address' => '"Demonstrators Anonymous" <info@example.org>',
-      'receipt_text_signup' => 'Thank you text',
+      'receipt_text' => 'Thank you text',
       'payment_processor_id' => $this->_paymentProcessorID,
       'credit_card_number' => '4111111111111111',
       'cvv2' => '123',
       'credit_card_exp_date' => array(
         'M' => '9',
-        'Y' => '2024', // TODO: Future proof
+        'Y' => date("Y") + 2,
       ),
       'credit_card_type' => 'Visa',
       'billing_first_name' => 'Test',
@@ -159,31 +198,63 @@ class CRM_Member_Form_MembershipPriceSetRenewalTest extends CiviUnitTestCase {
       'billing_state_province_id-5' => '1003',
       'billing_postal_code-5' => '90210',
       'billing_country_id-5' => '1228',
+      'send_receipt' => 1,
+      'join_date' => '',
+      'start_date' => '',
+      'end_date' => '',
+      'campaign_id' => '',
     );
     $form->_contactID = $this->_contactID;
 
     $form->testSubmit($params);
-    $membership = $this->callAPISuccessGetSingle('Membership', array('contact_id' => $this->_contactID));
-    $this->callAPISuccessGetCount('ContributionRecur', array('contact_id' => $this->_contactID), 0);
-    $contribution = $this->callAPISuccess('Contribution', 'get', array(
-      'contact_id' => $this->_contactID,
-      'is_test' => TRUE,
-    ));
 
-    $this->callAPISuccessGetCount('LineItem', array(
-      'entity_id' => $membership['id'],
-      'entity_table' => 'civicrm_membership',
-      'contribution_id' => $contribution['id'],
-    ), 1);
-    $this->_checkFinancialRecords(array(
-      'id' => $contribution['id'],
-      'total_amount' => 50,
-      'financial_account_id' => 2,
-      'payment_instrument_id' => $this->callAPISuccessGetValue('PaymentProcessor', array(
-        'id' => $this->_paymentProcessorID,
-        'return' => 'payment_instrument_id',
-      )),
-    ), 'online');
+    $actualData = $this->getConnection()->createQueryTable('memberships_etc', '
+    select
+  mem.membership_type_id,
+  mem.join_date,
+  mem.start_date,
+  mem.end_date,
+  mem.status_id as mem_status_id,
+  con.financial_type_id as con_financial_type_id,
+  con.payment_instrument_id,
+  con.total_amount,
+  con.fee_amount,
+  con.net_amount,
+  con.currency as con_currency,
+  con.contribution_status_id,
+  length(con.trxn_id) as trxn_id_ln,
+  length(con.invoice_id) as invoice_id_ln,
+  lit.qty,
+  lit.unit_price,
+  lit.line_total,
+  lit.financial_type_id as lit_financial_type_id,
+  date(fit.created_date) as created_date,
+  date(fit.transaction_date) as transaction_date,
+  fit.description,
+  fit.amount,
+  fit.currency as fit_currency,
+  fit.financial_account_id,
+  fit.status_id as fit_status_id
+from civicrm_membership as mem
+  left join civicrm_membership_payment pay on pay.membership_id = mem.id
+  left join civicrm_contribution con on con.id = pay.contribution_id
+
+  -- Should also be able to get to the financial type for each membership
+  left join civicrm_line_item lit on
+                                    lit.entity_table = \'civicrm_membership\'
+                                    and lit.contribution_id = con.id
+                                    and (select pfv.membership_type_id from civicrm_price_field_value pfv where pfv.id = lit.price_field_value_id) = mem.membership_type_id
+  left join civicrm_financial_item fit on
+                                    fit.entity_table = \'civicrm_line_item\'
+                                    and fit.entity_id = lit.id
+
+
+order by membership_type_id ');
+
+    $expectedData1 = $this->createFlatXmlDataSet(dirname(__FILE__) . "/dataset/price_set_renewal_expected.xml")->getTable("memberships_etc");
+    $expectedData2 = new PHPUnit_Extensions_Database_DataSet_ReplacementTable($expectedData1);
+    $expectedData2->addFullReplacement("special-now", date("Y-m-d"));
+    $this->assertTablesEqual($expectedData2, $actualData);
   }
 
 
